@@ -31,7 +31,7 @@ class MFS(object):
     for page in xrange(self.num_pages):
       page = MFSPage(self.data[page * self.PAGE_SIZE:(page + 1) * self.PAGE_SIZE], page) # Load page
       if page.isToBeErased():
-        assert self.to_be_erased == None
+        assert self.to_be_erased is None
         self.to_be_erased = page
       elif page.isSystemPage():
         self.sys_pages.append(page)
@@ -70,9 +70,7 @@ class MFS(object):
         self.data_pages[data_page_idx].addChunk(chunk)
     for data_page in self.data_pages:
       data_page.generate()
-    self.data = ""
-    for sys_page in self.sys_pages:
-      self.data += sys_page.data
+    self.data = "".join(sys_page.data for sys_page in self.sys_pages)
     for data_page in self.data_pages:
       self.data += data_page.data
     self.data += self.to_be_erased.data
@@ -122,7 +120,7 @@ class MFSPage(object):
     crc = MFS.Crc8(self.data[:self.PAGE_HEADER_FMT.size - 2])
     assert zero == 0
     assert self.signature == 0 or \
-      (self.signature == self.MFS_PAGE_SIGNATURE and self.crc == crc)
+        (self.signature == self.MFS_PAGE_SIGNATURE and self.crc == crc)
 
     self.chunks = []
     if self.isSystemPage():
@@ -130,12 +128,12 @@ class MFSPage(object):
       last_chunk_id = 0
       for chunk in xrange(MFS.CHUNKS_PER_SYSTEM_PAGE):
         # End of chunks
-        if chunk_ids[chunk] == 0x7FFF or chunk_ids[chunk] == 0xFFFF:
+        if chunk_ids[chunk] in [0x7FFF, 0xFFFF]:
           break
 
         last_chunk_id = MFS.CrcIdx(last_chunk_id) ^ chunk_ids[chunk]
         offset = self.PAGE_HEADER_FMT.size + self.SYSTEM_PAGE_INDICES_FMT.size + \
-                 chunk * (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE)
+                   chunk * (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE)
         data = self.data[offset:offset + MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE]
         self.chunks.append(MFSChunk(data, last_chunk_id))
     else:
@@ -144,7 +142,7 @@ class MFSPage(object):
       for chunk in xrange(MFS.CHUNKS_PER_DATA_PAGE):
         if data_free[chunk] == 0:
           offset = self.PAGE_HEADER_FMT.size + self.DATA_PAGE_INDICES_FMT.size + \
-                   chunk * (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE)
+                     chunk * (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE)
           data = self.data[offset:offset+MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE]
           chunk_id = self.first_chunk + chunk
           self.chunks[chunk] = MFSChunk(data, chunk_id)
@@ -166,10 +164,7 @@ class MFSPage(object):
     return None
 
   def resetChunks(self):
-    if self.isSystemPage():
-      self.chunks = []
-    else:
-      self.chunks = [None] * MFS.CHUNKS_PER_DATA_PAGE
+    self.chunks = [] if self.isSystemPage() else [None] * MFS.CHUNKS_PER_DATA_PAGE
 
   def setChunks(self, chunks):
     self.chunks = chunks
@@ -191,10 +186,10 @@ class MFSPage(object):
       assert len(self.chunks) <= MFS.CHUNKS_PER_SYSTEM_PAGE
       chunk_ids = []
       last_chunk_id = 0
-      for i, chunk in enumerate(self.chunks):
+      for chunk in self.chunks:
         chunk_ids.append(MFS.CrcIdx(last_chunk_id) ^ chunk.id)
         last_chunk_id = chunk.id
-      if len(self.chunks) == MFS.CHUNKS_PER_SYSTEM_PAGE or len(self.chunks) == 0:
+      if len(self.chunks) in [MFS.CHUNKS_PER_SYSTEM_PAGE, 0]:
         chunk_ids.append(0xFFFF)
       else:
         # Use case of exactly 120 chunks in the last system page...
@@ -205,7 +200,7 @@ class MFSPage(object):
       for chunk in self.chunks:
         data += chunk.getRawData()
       data += '\xFF' * ((MFS.CHUNKS_PER_SYSTEM_PAGE - len(self.chunks)) * \
-                        (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE) + 0xC)
+                          (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE) + 0xC)
     else:
       assert len(self.chunks) == MFS.CHUNKS_PER_DATA_PAGE
       data_free = []
@@ -216,11 +211,9 @@ class MFSPage(object):
         else:
           data_free.append(0xFF)
       data += self.DATA_PAGE_INDICES_FMT.pack(*data_free)
-      for i, chunk in enumerate(self.chunks):
-        if chunk:
-          data += chunk.getRawData()
-        else:
-          data += "\xFF" * (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE)
+      for chunk in self.chunks:
+        data += (chunk.getRawData() if chunk else "\xFF" *
+                 (MFS.CHUNK_SIZE + MFS.CHUNK_CRC_SIZE))
     assert len(data) == MFS.PAGE_SIZE
     self.data = data
 
@@ -235,16 +228,15 @@ class MFSPage(object):
   def __str__(self):
     if self.isToBeErased():
       return "ToBeErased"
-    if self.isSystemPage():
-      chunk_ids = set()
-      for i in xrange(len(self.chunks)):
-        chunk_ids.add(str(self.chunks[i].id))
-      chunk_ids = list(chunk_ids)
-      chunk_ids.sort()
-      res = "System-%d (USN: 0x%X): %s" % (self.page_id, self.USN, ", ".join(chunk_ids))
-    else:
-      res = "Data-%d: %X" % (self.page_id, self.first_chunk)
-    return res
+    if not self.isSystemPage():
+      return "Data-%d: %X" % (self.page_id, self.first_chunk)
+    chunk_ids = {str(self.chunks[i].id) for i in xrange(len(self.chunks))}
+    chunk_ids = sorted(chunk_ids)
+    return "System-%d (USN: 0x%X): %s" % (
+        self.page_id,
+        self.USN,
+        ", ".join(chunk_ids),
+    )
 
   def __repr__(self):
     return str(self)
@@ -284,12 +276,11 @@ class MFSSystemVolume(object):
 
     for page in system_pages:
       for chunk in page.chunks:
-        self.data = self.data[0:chunk.id * MFS.CHUNK_SIZE] + \
-                    chunk.data + \
-                    self.data[(chunk.id + 1) * MFS.CHUNK_SIZE:]
+        self.data = (self.data[:chunk.id * MFS.CHUNK_SIZE] +
+                     chunk.data) + self.data[(chunk.id + 1) * MFS.CHUNK_SIZE:]
 
     (self.signature, self.version, self.capacity, self.num_files) \
-      = self.SYSTEM_VOLUME_HEADER_FMT.unpack_from(self.data)
+        = self.SYSTEM_VOLUME_HEADER_FMT.unpack_from(self.data)
 
     assert self.signature == self.SYSTEM_VOLUME_SIGNATURE
     assert self.version == 1
@@ -303,14 +294,14 @@ class MFSSystemVolume(object):
       if chain == 0xFFFF:
         # Empty file
         self.files[id] = MFSFile(id)
-      elif chain != 0 and chain != 0xFFFE:
+      elif chain not in [0, 0xFFFE]:
         self.files[id] = MFSFile(id)
         while chain > 0:
           data_chunk_idx = chain - self.num_files
           page_idx = data_chunk_idx // MFS.CHUNKS_PER_DATA_PAGE
           chunk = data_pages[page_idx].getChunk(self.total_chunks + data_chunk_idx)
           next_chain = self.data_ids[data_chunk_idx]
-          size = MFS.CHUNK_SIZE if next_chain > MFS.CHUNK_SIZE else next_chain
+          size = min(next_chain, MFS.CHUNK_SIZE)
           self.files[id].addChunk(chunk, size)
           if next_chain <= MFS.CHUNK_SIZE:
             break
@@ -321,9 +312,7 @@ class MFSSystemVolume(object):
     return self.num_files
 
   def getFile(self, id):
-    if id >= 0 and id <= self.num_files:
-      return self.files[id]
-    return None
+    return self.files[id] if id >= 0 and id <= self.num_files else None
 
   def iterateFiles(self):
     for id in xrange(self.num_files):
@@ -360,28 +349,22 @@ class MFSSystemVolume(object):
           self.data_ids[chain] = 0
         return False
       file.addData(self.total_chunks + chain, data[offset:offset+MFS.CHUNK_SIZE])
-      if len(data_chain) > 0:
+      if data_chain:
         self.data_ids[data_chain[-1]] = chain + self.num_files
       data_chain.append(chain)
       self.data_ids[chain] = size - offset
-    if len(data_chain) > 0:
-      self.file_ids[id] = data_chain[0] + self.num_files
-    else:
-      # Empty file
-      self.file_ids[id] = 0xFFFF
+    self.file_ids[id] = data_chain[0] + self.num_files if data_chain else 0xFFFF
     self.files[id] = file
 
   def getNextFreeDataChunk(self):
-    for i, chain in enumerate(self.data_ids):
-      if chain == 0:
-        return i
-    return -1
+    return next((i for i, chain in enumerate(self.data_ids) if chain == 0), -1)
 
   def getLastFreeDataChunk(self):
-    for i, chain in reversed(list(enumerate(self.data_ids))):
-      if chain == 0:
-        return i
-    return -1
+    return next(
+        (i
+         for i, chain in reversed(list(enumerate(self.data_ids))) if chain == 0),
+        -1,
+    )
 
   def generate(self):
     data = self.SYSTEM_VOLUME_HEADER_FMT.pack(self.signature, self.version,
