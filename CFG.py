@@ -38,25 +38,20 @@ class CFG(object):
         self.records.append(record)
 
   def getFile(self, path):
-    for file in self.files:
-      if file.path == path:
-        return file
-    return None
+    return next((file for file in self.files if file.path == path), None)
 
   def removeFile(self, path, recursive = False):
-    file = self.getFile(path)
-    if file:
-      if len(file.children) > 0 and not recursive:
-        return False
-      # Copy list of children since we're modifying the list
-      for child in file.children[:]:
-        self.removeFile(child.path, recursive)
-      self.files.remove(file)
-      if file.parent:
-        file.parent.removeChild(file)
-      return True
-    else:
+    if not (file := self.getFile(path)):
       return False
+    if len(file.children) > 0 and not recursive:
+      return False
+    # Copy list of children since we're modifying the list
+    for child in file.children[:]:
+      self.removeFile(child.path, recursive)
+    self.files.remove(file)
+    if file.parent:
+      file.parent.removeChild(file)
+    return True
 
   def addFile(self, path, data, mode, opt, uid, gid):
     file = self.getFile(path)
@@ -114,13 +109,7 @@ class CFG(object):
   def modeToStr(mode):
     assert mode & 0xE000 == 0
     modeStr = "dAEIrwxrwxrwx"
-    ret = ""
-    for i in xrange(13):
-      if mode & (0x1000 >> i):
-        ret += modeStr[i]
-      else:
-        ret += "-"
-    return ret
+    return "".join(modeStr[i] if mode & (0x1000 >> i) else "-" for i in xrange(13))
 
   @staticmethod
   def strToMode(str):
@@ -131,20 +120,14 @@ class CFG(object):
       if str[i] == modeStr[i]:
         mode |= (0x1000 >> i)
       else:
-        assert str[i] == '-' or str[i] == ' '
+        assert str[i] in ['-', ' ']
     return mode
 
   @staticmethod
   def optToStr(opt):
     assert opt & 0xFFF0 == 0
     optStr = "?!MF"
-    ret = ""
-    for i in xrange(4):
-      if opt & (8 >> i):
-        ret += optStr[i]
-      else:
-        ret += "-"
-    return ret
+    return "".join(optStr[i] if opt & (8 >> i) else "-" for i in xrange(4))
 
   @staticmethod
   def strToOpt(str):
@@ -155,7 +138,7 @@ class CFG(object):
       if str[i] == optStr[i]:
         opt |= (8 >> i)
       else:
-        assert str[i] == '-' or str[i] == ' '
+        assert str[i] in ['-', ' ']
     return opt
 
 class CFGRecord(object):
